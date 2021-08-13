@@ -13,18 +13,17 @@ logger = logging.getLogger()
 def check_mentions(api, since_id):
     logger.info("Recibiendo menciones...")
     new_since_id = since_id
-    for tweet in tweepy.Cursor(api.mentions_timeline, since_id=since_id).items():
+    for tweet in tweepy.Cursor(api.mentions_timeline, tweet_mode="extended",  since_id=since_id).items():
         new_since_id = max(str(tweet.id), new_since_id)
         
         #if tweet.in_reply_to_status_id is not None:
-        #    continue
-        
+        #    continue        
         logger.info("Respondiendo a {name}".format(name=tweet.user.name))
         
-        text = re.sub("@[a-zA-Z0-9]+", " ", tweet.text, flags=re.I)
+        text = re.sub("@[a-zA-Z0-9]+", " ", tweet.full_text, flags=re.I)
         
         if ';' in text or '{' in text or '(' in text or '+' in text or '"' in text:
-            response = evaluateJs(text)
+            response = evaluateJs(str(tweet.id),text)
         else:
             response = "Hola, puedes executar Javascript llamandome!"
          
@@ -39,7 +38,7 @@ def check_mentions(api, since_id):
                
     return new_since_id
 
-def evaluateJs(text):
+def evaluateJs(tweet_id, text):
     config_accesskey = os.environ['AWS_ACCESS_KEY']
     config_secret = os.environ['AWS_ACCESS_SECRET']
     config_region = os.environ['AWS_REGION']
@@ -47,26 +46,32 @@ def evaluateJs(text):
     
     text = text.replace("\n", " ").replace('"', '\\"').replace('&gt;', '>').replace('&lt;', '<')
 
-    content = '''exports.handler = async (event) => {
-        ret = eval("[CODE]");
-        return ret;
-      };'''
-    content = content.replace('[CODE]', text)
+    #content = '''exports.handler = async (event) => {
+    #    ret = eval("[CODE]");
+    #    return ret;
+    #  };'''
+    #content = content.replace('[CODE]', text)
+    
+    content = text
 
-    with open("/tmp/jsuno/index.js", "w") as wf:
+    with open("/tmp/jsuno/script_" + tweet_id + ".js", "w") as wf:
         wf.write(content)
     
-    os.system("rm /tmp/jsuno.zip")
-    os.system("zip /tmp/jsuno.zip -j /tmp/jsuno/index.js")
-    ret = system_call("{default_aws_access_config} aws lambda update-function-code --function-name jsuno --zip-file fileb:///tmp/jsuno.zip".format(default_aws_access_config=default_aws_access_config))
 
-    if "error" in str(ret):
-        return "Tuvimos un error al ejecutar. Por favor intenta luego!"
-    else:
-        ret = os.system("{default_aws_access_config} aws lambda invoke --function-name \"jsuno:\$LATEST\" \"/tmp/out_1.txt\"".format(default_aws_access_config=default_aws_access_config))
+    ret = system_call("{default_aws_access_config} aws s3 cp /tmp/jsuno/script_{tweet_id}.js s3://jsuno/script_{tweet_id}.js".format(default_aws_access_config=default_aws_access_config,tweet_id=tweet_id))
+
+    #os.system("rm /tmp/jsuno.zip")
+    #os.system("zip /tmp/jsuno.zip -j /tmp/jsuno/index.js")
+    #ret = system_call("{default_aws_access_config} aws lambda update-function-code --function-name jsuno --zip-file fileb:///tmp/jsuno.zip".format(default_aws_access_config=default_aws_access_config))
+
+    #if "error" in str(ret):
+    #    return "Tuvimos un error al ejecutar. Por favor intenta luego!"
+    #else:
+    if True:
+        ret = os.system("{default_aws_access_config} aws lambda invoke --function-name \"jsuno:\$LATEST\" --payload '{{\"filename\": \"script_{tweet_id}.js\"}}' \"/tmp/jsuno/out_{tweet_id}.txt\"".format(default_aws_access_config=default_aws_access_config, tweet_id=tweet_id))
   
         result = ""
-        with open("/tmp/out_1.txt", "r") as f:
+        with open("/tmp/jsuno/out_" + tweet_id + ".txt", "r") as f:
             result = str(f.read())
         
         if "{" in result:
